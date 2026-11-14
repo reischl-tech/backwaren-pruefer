@@ -28,7 +28,7 @@ def prepare_image_bytes(image, rotate_angle=0):
     return buffered.getvalue()
 
 def analyze_bakery_month(ls_images, re_images_with_rot, key):
-    client = genai.Client(api_key=key)
+    client = genai.Client(api_key=key.strip())
     
     prompt_text = f"""
     Du bist ein spezialisierter Buchhaltungs-Prüfer für eine Bäckerei/Filiale.
@@ -87,15 +87,36 @@ def analyze_bakery_month(ls_images, re_images_with_rot, key):
         contents.append(f"--- LIEFERÜBERSICHT SEITE {idx+1} ---")
         contents.append(types.Part.from_bytes(data=prepare_image_bytes(img, rot), mime_type="image/jpeg"))
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=contents,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.1
-        )
-    )
-    return json.loads(response.text)
+    # Probiert zuerst das geforderte neue Modell, mit Fallback auf aktuelle Alternativen
+    models_to_try = ["gemini-3.8-flash", "gemini-3.0-flash", "gemini-2.5-pro"]
+    response = None
+    last_error = None
+
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1
+                )
+            )
+            break
+        except Exception as e:
+            last_error = e
+            if "404" in str(e) or "NOT_FOUND" in str(e):
+                continue
+            raise e
+
+    if response is None:
+        raise last_error
+
+    raw_text = response.text.strip()
+    if raw_text.startswith("```"):
+        raw_text = raw_text.strip("`").removeprefix("json").strip()
+
+    return json.loads(raw_text)
 
 st.subheader("1. Alle Lieferscheine des Monats")
 ls_files = st.file_uploader("Lieferschein-Fotos auswählen", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="ls")
